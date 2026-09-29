@@ -1,6 +1,7 @@
-from libcellml import Generator, GeneratorProfile, Printer
-from analyser import parse_model,analyse_model_full,validate_model,resolve_imports,_ext_var_dic,analyse_model
-import os
+from libcellml import AnalyserModel, Generator, GeneratorProfile, Model, Printer
+from .analyser import parse_model,analyse_model_full,flatten_model
+from .utilities import validate_file_path
+from pathlib import Path
 """
 =================
 Code generation
@@ -12,7 +13,7 @@ The following functions are defined:
     * writePythonCode: generate python file from a CellML model.
 """
 
-def writeCellML(model, full_path):  
+def writeCellML(model: Model, full_path: str) -> None:  
     """ 
     Write a CellML model to a CellML file.
 
@@ -29,15 +30,16 @@ def writeCellML(model, full_path):
     """
     
     printer = Printer()
-    serialised_model = printer.printModel(model) 
-    with open(full_path, "w") as f:
-        f.write(serialised_model)   
+    serialised_model = printer.printModel(model)
+    full_path_ = validate_file_path(full_path) 
+    if full_path_:
+        with open(full_path_, "w") as f:
+            f.write(serialised_model)
+        print('CellML model saved to:',full_path)   
 
-    print('CellML model saved to:',full_path)
-
-def writeCellML_flat(model, full_path, base_dir,external_variables_info={},strict_mode=True):  
+def writeCellML_flat(model: Model, full_path: str, base_dir: str|Path,strict_mode=True)-> None:  
     """ 
-    Write a flattend CellML model to a CellML file.
+    Write a CellML model to a CellML file after flattening it.
 
     Parameters
     ----------
@@ -45,7 +47,7 @@ def writeCellML_flat(model, full_path, base_dir,external_variables_info={},stric
         The CellML model to be written.
     full_path: str
         The full path of the CellML file (including the file name and extension).
-    base_dir: str
+    base_dir: str|Path
         The base directory of the CellML model.
     strict_mode: bool
         If True, the model is checked against the CellML 2.0 specification.
@@ -54,42 +56,21 @@ def writeCellML_flat(model, full_path, base_dir,external_variables_info={},stric
     -----------
     The CellML model is written to the specified file.
     """
-    modelIsValid,issues_validate=validate_model(model)
-    if modelIsValid:
-        importer,issues_import=resolve_imports(model, base_dir,strict_mode)
-        if importer:
-            flatModel=importer.flattenModel(model)
-            if not flatModel:
-                return None, issues_import
-            else:  
-                printer = Printer()
-                serialised_model = printer.printModel(flatModel) 
-                with open(full_path, "w") as f:
-                    f.write(serialised_model)   
-
-                print('CellML model saved to:',full_path)
-                try:
-                    external_variables_dic=_ext_var_dic(flatModel,external_variables_info)
-                except ValueError as err:
-                    return None, str(err)           
-                analyser,issues_analyse=analyse_model(flatModel,external_variables_dic)
-                issues=issues_validate+issues_import+issues_analyse
-                
-                return flatModel, issues
-        else:
-            return None, issues_import
+    flat_model, issues = flatten_model(model, base_dir, strict_mode)
+    if flat_model is not None:
+        writeCellML(flat_model, full_path)
     else:
-        return None, issues_validate    
+        print('Error: Unable to flatten the model. Issues:', issues)   
 
-def writePythonCode(analyser, full_path):
+def writePythonCode(analyser_model:AnalyserModel, full_path):
     """ 
     Generate Python code from a CellML model
     and write the code to the specified file.
 
     Parameters
     ----------
-    analyser: Analyser
-        The Analyser instance of the CellML model.
+    analyser_model: AnalyserModel
+        The AnalyserModel instance of the CellML model.
     full_path: str
         The full path of the python file (including the file name and extension).
 
@@ -99,12 +80,12 @@ def writePythonCode(analyser, full_path):
     """
 
     generator = Generator()
-    generator.setModel(analyser.model())
-    profile = GeneratorProfile(GeneratorProfile.Profile.PYTHON)
-    generator.setProfile(profile)
-    implementation_code_python = generator.implementationCode()                   
-    with open(full_path, "w") as f:
-        f.write(implementation_code_python)
+    profile = GeneratorProfile(GeneratorProfile.Profile_PYTHON)
+    implementation_code_python = generator.implementationCode(analyser_model, profile)                   
+    full_path_ = validate_file_path(full_path) 
+    if full_path_:
+        with open(full_path_, "w") as f:
+            f.write(implementation_code_python)
 
 def toCellML2(oldPath, newPath, external_variables_info={},strict_mode=True, py_full_path=None):
     """ 
@@ -132,12 +113,15 @@ def toCellML2(oldPath, newPath, external_variables_info={},strict_mode=True, py_
     try:
         model_parse, issues=parse_model(oldPath, False)
     except Exception as e:
-        print(e)  
-    print(issues)
+        print(f"Error parsing the model from {oldPath}: {e}")
+        return
+    if model_parse is None:
+        print(f"Error: Unable to parse the model from {oldPath}. Issues: {issues}")
+        return     
     writeCellML(model_parse,newPath)
-    base_dir=os.path.dirname(newPath)
-    analyser,issues=analyse_model_full(model_parse,base_dir,external_variables_info,strict_mode)
+    base_dir=Path(newPath).parent
+    analyser_model,issues=analyse_model_full(model_parse,base_dir,external_variables_info,strict_mode)
     print(issues)
-    if py_full_path is not None:
-        writePythonCode(analyser, py_full_path)
+    if py_full_path is not None and analyser_model is not None:
+        writePythonCode(analyser_model, py_full_path)
     

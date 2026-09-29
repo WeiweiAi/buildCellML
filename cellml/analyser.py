@@ -1,7 +1,7 @@
-from libcellml import  Parser, Validator, Analyser, AnalyserExternalVariable, Importer, cellmlElementTypeAsString, AnalyserModel
+from libcellml import Model, Parser, Validator, Analyser, AnalyserExternalVariable, Importer, cellmlElementTypeAsString, AnalyserModel
 import json
-import os
 from pathlib import Path, PurePath
+from utilities import get_file
 
 """
 ========
@@ -27,7 +27,7 @@ Functions
 
 """
 
-def _dump_issues(source_method_name, logger):
+def _dump_issues(source_method_name: str, logger: Parser | Validator | Importer | Analyser) -> str:
     """"
     Dump the issues found by the parser, validator, importer or analyser.
 
@@ -57,14 +57,14 @@ def _dump_issues(source_method_name, logger):
             issues=issues+'The reference rule is: '+logger.issue(i).referenceHeading( )+'<br>'
     return issues
 
-def parse_model(filename, strict_mode=False):
+def parse_model(filename: str, strict_mode=False)-> tuple[Model | None, str]:
     """ 
     Parse a CellML file to a CellML model.
 
     Parameters
     ----------
     filename: str
-        The fullpath of the CellML file.
+        The fullpath of the CellML file or a URL to a remote CellML file.
     strict_mode: bool, optional
         Whether to use strict mode to parse the CellML file. Default: False.
         If False, the parser can parse CellML 1.0 and 1.1 files. TODO: check this
@@ -82,20 +82,20 @@ def parse_model(filename, strict_mode=False):
         If issues are found, the model could be None.
     """
 
-    if not os.path.isfile(filename):
-        raise FileNotFoundError('Model source file `{}` does not exist.'.format(filename))
-    
-    parser = Parser(strict_mode)
-    with open(filename, 'r') as f:
-        model = parser.parseModel(f.read())
-    issues = _dump_issues("parse_model", parser)
-    if issues !='':
-        return model, issues
-    else:
-        issues="parse_model: No issues found!<br>"
-        return model, issues
+    try:
+        file_contents = get_file(filename)
+        parser = Parser(strict_mode)
+        model = parser.parseModel(file_contents)
+        issues = _dump_issues("parse_model", parser)
+        if issues !='':
+            return model, issues
+        else:
+            issues="parse_model: No issues found!<br>"
+            return model, issues
+    except Exception as e:
+        return None, json.dumps(str(e))
 
-def validate_model(model):
+def validate_model(model:Model) -> tuple[bool, str]:
     """ 
     Validate a CellML model.
     
@@ -120,7 +120,7 @@ def validate_model(model):
     else:
         return False, issues
 
-def resolve_imports(model, base_dir,strict_mode=True):
+def resolve_imports(model:Model, base_dir: str|Path,strict_mode=True)-> tuple[Importer | None, str]:
     """ 
     Resolve the imports of a CellML model.
     
@@ -157,9 +157,46 @@ def resolve_imports(model, base_dir,strict_mode=True):
         issues="resolve_imports: No issues found!<br>"
         return importer, issues
     else:
-        return importer, issues
+        if model.hasUnresolvedImports():
+            issues=issues+"resolve_imports: The model has unresolved imports!<br>"
+            for i in model.importRequirements():
+                issues=issues+"Import requirement: "+i+'<br>'
+        return None, issues
 
-def analyse_model(flatModel,external_variables_dic={}):
+def flatten_model(model:Model, base_dir: str|Path,strict_mode=True)-> tuple[Model | None, str]:
+    """ 
+    Flatten a CellML model.
+    
+    Parameters
+    ----------
+    model: Model
+        The CellML model to be flattened.
+    base_dir: str
+        The full path to the directory that import URLs are relative to.
+    strict_mode: bool, optional
+        Whether to use strict mode to resolve imports. Default: True.
+
+    Returns
+    -------
+    tuple
+        (Model, str)
+        The flattened CellML model and the issues found by the importer.
+        If issues are found, the flattened model is None.
+    """
+    importer,issues=resolve_imports(model, base_dir,strict_mode)
+    if importer:
+        modelIsValid, issues_validate=validate_model(model)
+        if not modelIsValid:
+            return None, issues_validate+issues+"flatten_model: The model is not valid! <br> "
+        flatModel=importer.flattenModel(model)
+        if not flatModel:
+            return None, issues_validate+issues+"flatten_model: Unable to flatten the model! <br> "
+        else:
+            return flatModel, issues_validate+issues
+    else:
+        return None, issues
+
+def analyse_model(flatModel:Model,external_variables_dic:dict={})-> tuple[AnalyserModel | None, str]:
     """ 
     Analyse a flattened CellML model.
     
@@ -174,8 +211,8 @@ def analyse_model(flatModel,external_variables_dic={}):
     Returns
     -------
     tuple
-        (Analyser, str)
-        The Analyser instance and the issues found by the analyser.
+        (AnalyserModel, str)
+        The AnalyserModel instance and the issues found by the analyser.
         If issues are found, the analyser is None.
     """ 
 
@@ -188,13 +225,14 @@ def analyse_model(flatModel,external_variables_dic={}):
             return None, "analyse_model: Unable to add external variable {} to the analyser! <br> ".format(external_variable.name())	
     analyser.analyseModel(flatModel)
     issues = _dump_issues("analyse_model", analyser)
+    analyser_model = analyser.analyserModel()
     if issues=='':
-        return analyser, issues
+        return analyser_model, issues
     else:
-        return analyser, issues # TODO: need to check when analyser is not None and issues is not empty.
+        return None, issues # TODO: need to check when analyser is not None and issues is not empty.
         #return None, issues
     
-def analyse_model_full(model,base_dir,external_variables_info={},strict_mode=True):
+def analyse_model_full(model:Model,base_dir: str|Path,external_variables_info={},strict_mode=True)-> tuple[AnalyserModel | None, str]:
     """ 
     Fully validate and analyse a cellml model.
    
@@ -212,30 +250,27 @@ def analyse_model_full(model,base_dir,external_variables_info={},strict_mode=Tru
     Returns
     -------
     tuple
-        (Analyser, str)
-        The Analyser instance and the issues found by the analysing process.
+        (AnalyserModel, str)
+        The AnalyserModel instance and the issues found by the analysing process.
         If issues are found, the analyser is None.
     """
-    modelIsValid,issues_validate=validate_model(model)
-    if modelIsValid:
-        importer,issues_import=resolve_imports(model, base_dir,strict_mode)
-        if importer:
-            flatModel=importer.flattenModel(model)
-            if not flatModel:
-                return None, json.dumps(issues_import)
-            try:
-                external_variables_dic=_ext_var_dic(flatModel,external_variables_info)
-            except ValueError as err:
-                return None, json.dumps(str(err))            
-            analyser,issues_analyse=analyse_model(flatModel,external_variables_dic)
-            issues=issues_validate+issues_import+issues_analyse
-            if analyser:
-                return analyser, json.dumps(issues)
+    importer,issues=resolve_imports(model, base_dir,strict_mode)
+    if importer:
+        modelIsValid, issues_validate=validate_model(model)
+        if not modelIsValid:
+            return None, issues+issues_validate+"analyse_model_full: The model is not valid! <br> "
+        try:
+            external_variables_dic=_ext_var_dic(model,external_variables_info)
+        except ValueError as err:
+            return None, json.dumps(str(err))          
+
+        analyser_model,issues_analyse=analyse_model(model,external_variables_dic)
+        if analyser_model:
+            return analyser_model, issues+issues_validate+issues_analyse
         else:
-            issues=issues_validate+issues_import
+            return None, issues+issues_validate+issues_analyse+"analyse_model_full: Unable to analyse the model! <br> "
     else:
-        issues=issues_validate
-    return None, json.dumps(issues)
+        return None, issues
 
 def get_mtype(analyser):
     """ Get the type of the model.

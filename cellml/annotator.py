@@ -1,22 +1,32 @@
-from libcellml import cellmlElementTypeAsString,Annotator
+from __future__ import annotations
+from libcellml import cellmlElementTypeAsString,Annotator,CellmlElementType, Model
 
-def annotateModel(model):
-
+def getAnnotator(model: Model) -> Annotator:
     annotator = Annotator()
     annotator.setModel(model)
+    removeDuplicateIds(annotator)
+    return annotator
+
+def removeDuplicateIds(annotator: Annotator) -> Annotator:
     duplicatedIds = annotator.duplicateIds()
     for duplicatedId in duplicatedIds:
         allItems = annotator.items(duplicatedId)
         for item in allItems:
             annotator.assignId(item)
+    return annotator
+
+def assignID2all(annotator: Annotator) -> Annotator:
     annotator.assignAllIds()
-
     return annotator
 
-def getAnnotator(model):
-    annotator = Annotator()
-    annotator.setModel(model)
+def assignID2vars(annotator: Annotator) -> Annotator:
+    annotator.assignIds(CellmlElementType.VARIABLE)
     return annotator
+
+def assignID2units(annotator: Annotator) -> Annotator:
+    annotator.assignIds(CellmlElementType.UNITS)
+    return annotator
+
 
 def getElementByID(annotator, elementID):
     """ Get a CellML element by ID in a annotator
