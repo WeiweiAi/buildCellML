@@ -1,10 +1,12 @@
 from __future__ import annotations
+import json
 from libcellml import Units,Variable, AnalyserModel
 from enum import Enum, auto
 from dataclasses import dataclass
 from .analyser import parse_model
 import rdflib
 from .viewer import view_equivalent_variables
+from .utilities import validate_file_path
 
 class Domain(Enum):
     CHEMICAL = auto()
@@ -76,6 +78,8 @@ OPB_ROLE_MAP: dict[str, tuple[Domain, PhysicalRole]] = {
     "OPB_00563": (Domain.UNKNOWN, PhysicalRole.POWER),         # Power (mW)
     "OPB_00100": (Domain.UNKNOWN, PhysicalRole.QUANTITY),      # Thermodynamic entropy amount, J/K
     "OPB_00564": (Domain.UNKNOWN, PhysicalRole.FLOW),          # Thermodynamic entropy flow, J/K/s
+    "OPB_00410": (Domain.UNKNOWN, PhysicalRole.QUANTITY),      # Ideal gas constant
+    "OPB_00089": (Domain.UNKNOWN, PhysicalRole.QUANTITY),      # Faraday constant
 }
 
 @dataclass
@@ -91,8 +95,9 @@ class VariableSignature:
     variable_name: str
     component_name: str
     variable_type: str
-    domain: Domain
-    role: PhysicalRole
+    units: str
+    domain: str
+    role: str
     opb_id: str
     equivalentVariables: list
 
@@ -181,13 +186,27 @@ class SemanticVariableClassifier:
                     variable_name=variable.name(),
                     component_name=variable.parent().name() if variable.parent() else "",
                     variable_type=analyserVar.typeAsString(analyserVar.type()),
-                    domain=domain,
-                    role=role,
+                    domain=domain.name,
+                    role=role.name,
                     opb_id=opb_id,
+                    units=variable.units().name() if variable.units() else "",
                     equivalentVariables=view_equivalent_variables(variable)
                 )
             )
         return variable_signatures
+
+    def save_variable_signatures_to_json(self, variable_signatures: list[VariableSignature], output_path: str):
+        """
+        Saves the variable signatures to a JSON file.
+        """
+        output_file = validate_file_path(output_path)
+        if output_file is None:
+            raise ValueError(f"Invalid output file path: {output_path}")
+        else:      
+        # Convert dataclass instances to dictionaries for JSON serialization
+           signatures_dict = [sig.__dict__ for sig in variable_signatures]
+           with open(output_file, 'w', encoding='utf-8') as f:
+              json.dump(signatures_dict, f, ensure_ascii=False, indent=4)
 
     
 

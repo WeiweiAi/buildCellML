@@ -1,7 +1,7 @@
 from libcellml import Model, Parser, Validator, Analyser, AnalyserExternalVariable, Importer, cellmlElementTypeAsString, AnalyserModel
 import json
 from pathlib import Path, PurePath
-from utilities import get_file
+from .utilities import get_file
 
 """
 ========
